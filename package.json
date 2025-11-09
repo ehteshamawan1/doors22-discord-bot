@@ -1,0 +1,30 @@
+{
+  "name": "doors22-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for Midjourney integration - Doors22 AI automation",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "nodemon src/bot.js"
+  },
+  "keywords": [
+    "discord",
+    "midjourney",
+    "doors22",
+    "automation"
+  ],
+  "author": "Cyberix Digital",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.2",
+    "firebase-admin": "^12.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
