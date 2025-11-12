@@ -78,13 +78,14 @@ class APIServer {
         // Generate request ID
         const requestId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        // Store request as pending
+        // Store request as pending (will update with message ID after sending)
         this.pendingRequests.set(requestId, {
           requestId,
           prompt,
           type,
           status: 'pending',
-          sentAt: new Date().toISOString()
+          sentAt: new Date().toISOString(),
+          promptSubstring: prompt.substring(0, 50) // For matching Discord messages
         });
 
         // For video: First generate image, then convert to video
@@ -94,34 +95,15 @@ class APIServer {
           // Remove video-specific parameters from prompt for image generation
           const imagePrompt = prompt.replace(/--video/g, '').replace(/--ar 9:16/g, '--ar 4:5').trim();
 
+          // Update request with image prompt for matching
+          const request = this.pendingRequests.get(requestId);
+          request.currentStep = 'image';
+          request.imagePrompt = imagePrompt;
+
           this.midjourney.Imagine(imagePrompt, async (uri, progress) => {
             console.log(`[Midjourney] Image generation progress: ${progress}% - ${uri}`);
 
-            // Check if 4-grid image is complete (final PNG with username)
-            if (uri && uri.includes('doors_22__78435') && uri.endsWith('.png')) {
-              console.log(`[API] Step 1/2 Complete: 4-image grid generated: ${uri}`);
-              console.log(`[API] Step 2/2: Generating video with base image...`);
-
-              try {
-                // Generate video with 4-grid image as start frame
-                const videoPrompt = `${uri} ${prompt}`;
-
-                this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
-                  console.log(`[Midjourney] Video generation progress: ${videoProgress}% - ${videoUri}`);
-
-                  if (videoUri && videoProgress === 100) {
-                    console.log(`[API] Request ${requestId} completed with video: ${videoUri}`);
-                    this.completeRequest(requestId, videoUri);
-                  }
-                }).catch(error => {
-                  console.error(`[Midjourney] Video generation error:`, error.message);
-                  this.failRequest(requestId, error.message);
-                });
-              } catch (error) {
-                console.error(`[API] Error starting video generation:`, error);
-                this.failRequest(requestId, error.message);
-              }
-            }
+            // Discord message handler will detect completion and trigger step 2
           }).catch(error => {
             console.error(`[Midjourney] Image generation error for request ${requestId}:`, error.message);
             this.failRequest(requestId, error.message);
@@ -131,15 +113,7 @@ class APIServer {
           this.midjourney.Imagine(prompt, async (uri, progress) => {
             console.log(`[Midjourney] Image progress: ${progress}% - ${uri}`);
 
-            // Midjourney generates 4-image grid - check if it's the final PNG (not webp preview)
-            if (uri && uri.includes('doors_22__78435') && uri.endsWith('.png')) {
-              // This is the final 4-image grid
-              console.log(`[API] 4-image grid generated: ${uri}`);
-
-              // For images, return the 4-grid directly
-              console.log(`[API] Request ${requestId} completed with 4-grid image: ${uri}`);
-              this.completeRequest(requestId, uri);
-            }
+            // Discord message handler will detect completion
           }).catch(error => {
             console.error(`[Midjourney] Error for request ${requestId}:`, error.message);
             this.failRequest(requestId, error.message);
@@ -214,6 +188,48 @@ class APIServer {
   }
 
   /**
+   * Handle image completion - either complete request or trigger video generation
+   */
+  async handleImageComplete(requestId, imageUrl) {
+    if (!this.pendingRequests.has(requestId)) {
+      console.log(`[API] Request ${requestId} not found in pending requests`);
+      return;
+    }
+
+    const request = this.pendingRequests.get(requestId);
+
+    // If this is for video generation, start step 2
+    if (request.type === 'video' && request.currentStep === 'image') {
+      console.log(`[API] Step 1/2 Complete: 4-image grid generated: ${imageUrl}`);
+      console.log(`[API] Step 2/2: Generating video with base image...`);
+
+      try {
+        // Update request
+        request.currentStep = 'video';
+        request.baseImageUrl = imageUrl;
+
+        // Generate video with 4-grid image as start frame
+        const videoPrompt = `${imageUrl} ${request.prompt}`;
+
+        this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
+          console.log(`[Midjourney] Video generation progress: ${videoProgress}% - ${videoUri}`);
+
+          // Discord message handler will detect video completion
+        }).catch(error => {
+          console.error(`[Midjourney] Video generation error:`, error.message);
+          this.failRequest(requestId, error.message);
+        });
+      } catch (error) {
+        console.error(`[API] Error starting video generation:`, error);
+        this.failRequest(requestId, error.message);
+      }
+    } else {
+      // Regular image request - complete it
+      this.completeRequest(requestId, imageUrl);
+    }
+  }
+
+  /**
    * Mark a request as completed
    * Called by the message handler when Midjourney responds
    */
@@ -248,26 +264,6 @@ class APIServer {
     }
   }
 
-  /**
-   * Find request by message ID (for matching Midjourney responses)
-   */
-  findRequestByMessageId(messageId) {
-    for (const [requestId, request] of this.pendingRequests.entries()) {
-      if (request.messageId === messageId) {
-        return requestId;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Extract hash from Midjourney image URI
-   */
-  extractHashFromUri(uri) {
-    // Extract hash from URI like: ...doors_22__78435_..._HASH.png
-    const match = uri.match(/_([a-f0-9-]+)\.(png|webp)/i);
-    return match ? match[1] : null;
-  }
 
   start() {
     this.app.listen(this.port, '0.0.0.0', () => {

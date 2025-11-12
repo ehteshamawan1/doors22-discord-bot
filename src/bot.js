@@ -35,20 +35,45 @@ client.on('messageCreate', async (message) => {
 
     console.log('📩 Received message from Midjourney:', message.id);
 
-    // Check if message has image attachments (generation completed)
+    // Check if message has attachments (generation completed)
     if (message.attachments.size > 0) {
       const attachment = message.attachments.first();
-      console.log('🖼️  Image URL:', attachment.url);
+      const mediaUrl = attachment.url;
+      console.log('🖼️  Media URL:', mediaUrl);
 
-      // Try to find the original request
-      // Midjourney replies to the original message or references it
-      const referenceId = message.reference?.messageId;
-      if (referenceId) {
-        const requestId = apiServer.findRequestByMessageId(referenceId);
-        if (requestId) {
-          console.log(`✅ Matched request ${requestId} with media`);
-          apiServer.completeRequest(requestId, attachment.url);
+      // Determine if this is an image or video
+      const isVideo = mediaUrl.endsWith('.mp4') || mediaUrl.endsWith('.mov') || mediaUrl.includes('/video/');
+      const isPng = mediaUrl.endsWith('.png');
+
+      console.log(`Media type: ${isVideo ? 'video' : 'image'}, isPng: ${isPng}`);
+
+      // Try to match with a pending request
+      // Look through all pending requests to find a match
+      let matchedRequestId = null;
+
+      for (const [requestId, request] of apiServer.pendingRequests.entries()) {
+        // For video requests on step 2, match videos
+        if (request.type === 'video' && request.currentStep === 'video' && isVideo) {
+          console.log(`✅ Matched video request ${requestId}`);
+          matchedRequestId = requestId;
+          apiServer.completeRequest(requestId, mediaUrl);
+          break;
         }
+
+        // For image requests or video step 1, match PNG images
+        if (isPng) {
+          // Check if this is an image request, or video request on step 1
+          if (request.type === 'image' || (request.type === 'video' && request.currentStep === 'image')) {
+            console.log(`✅ Matched image request ${requestId}`);
+            matchedRequestId = requestId;
+            await apiServer.handleImageComplete(requestId, mediaUrl);
+            break;
+          }
+        }
+      }
+
+      if (!matchedRequestId) {
+        console.log('⚠️  No matching request found for this media');
       }
     }
   } catch (error) {
