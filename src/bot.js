@@ -43,22 +43,29 @@ client.on('messageCreate', async (message) => {
 
       // Determine if this is an image or video
       // URLs may have query parameters, so check if .png or .mp4 appears before query string
-      const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('.mov') || mediaUrl.includes('/video/');
+      // Note: Midjourney videos come as animated .webp files, PNGs are static images
       const isPng = mediaUrl.includes('.png');
+      const isWebp = mediaUrl.includes('.webp');
 
-      console.log(`Media type: ${isVideo ? 'video' : 'image'}, isPng: ${isPng}`);
+      // For video requests, webp files are the completed videos
+      // For image requests, png files are the completed images
+      const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('.mov') || mediaUrl.includes('/video/');
+
+      console.log(`Media type: isPng=${isPng}, isWebp=${isWebp}, isVideo=${isVideo}`);
 
       // Try to match with a pending request
       // Look through all pending requests to find a match
       let matchedRequestId = null;
 
       for (const [requestId, request] of apiServer.pendingRequests.entries()) {
-        // For video requests on step 2, match videos
-        if (request.type === 'video' && request.currentStep === 'video' && isVideo) {
-          console.log(`✅ Matched video request ${requestId}`);
-          matchedRequestId = requestId;
-          apiServer.completeRequest(requestId, mediaUrl);
-          break;
+        // For video requests on step 2, match webp/mp4/mov files
+        if (request.type === 'video' && request.currentStep === 'video') {
+          if (isWebp || isVideo) {
+            console.log(`✅ Matched video request ${requestId} with ${isWebp ? 'WebP' : 'video'} file`);
+            matchedRequestId = requestId;
+            apiServer.completeRequest(requestId, mediaUrl);
+            break;
+          }
         }
 
         // For image requests or video step 1, match PNG images
