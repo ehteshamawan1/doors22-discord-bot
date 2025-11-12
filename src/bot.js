@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
+const APIServer = require('./server');
 
 // Initialize Discord client
 const client = new Client({
@@ -10,11 +11,17 @@ const client = new Client({
   ]
 });
 
+// Initialize API server
+const apiServer = new APIServer(client);
+
 // Bot ready event
 client.on('ready', () => {
   console.log(`✅ Bot logged in as ${client.user.tag}`);
   console.log(`Server ID: ${process.env.DISCORD_GUILD_ID}`);
   console.log(`Channel ID: ${process.env.DISCORD_CHANNEL_ID}`);
+
+  // Start API server after bot is ready
+  apiServer.start();
 });
 
 // Message handler for Midjourney responses
@@ -28,12 +35,21 @@ client.on('messageCreate', async (message) => {
 
     console.log('📩 Received message from Midjourney:', message.id);
 
-    // Check if message has image attachments
+    // Check if message has image attachments (generation completed)
     if (message.attachments.size > 0) {
-      message.attachments.forEach(attachment => {
-        console.log('🖼️  Image URL:', attachment.url);
-        // TODO: Download and process image
-      });
+      const attachment = message.attachments.first();
+      console.log('🖼️  Image URL:', attachment.url);
+
+      // Try to find the original request
+      // Midjourney replies to the original message or references it
+      const referenceId = message.reference?.messageId;
+      if (referenceId) {
+        const requestId = apiServer.findRequestByMessageId(referenceId);
+        if (requestId) {
+          console.log(`✅ Matched request ${requestId} with media`);
+          apiServer.completeRequest(requestId, attachment.url);
+        }
+      }
     }
   } catch (error) {
     console.error('Error handling message:', error);
