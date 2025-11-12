@@ -73,7 +73,7 @@ class APIServer {
           });
         }
 
-        console.log(`[API] Sending imagine command to Midjourney: ${prompt.substring(0, 100)}...`);
+        console.log(`[API] Generating ${type || 'image'} with Midjourney: ${prompt.substring(0, 100)}...`);
 
         // Generate request ID
         const requestId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -87,26 +87,65 @@ class APIServer {
           sentAt: new Date().toISOString()
         });
 
-        // Send to Midjourney API (async, don't wait)
-        this.midjourney.Imagine(prompt, (uri, progress) => {
-          console.log(`[Midjourney] Progress: ${progress}% - ${uri}`);
+        // For video: First generate image, then convert to video
+        if (type === 'video') {
+          console.log(`[API] Step 1/2: Generating base image for video...`);
 
-          if (progress === 100 && uri) {
-            // Generation completed
-            console.log(`[API] Request ${requestId} completed with image: ${uri}`);
-            this.completeRequest(requestId, uri);
-          }
-        }).catch(error => {
-          console.error(`[Midjourney] Error for request ${requestId}:`, error.message);
-          this.failRequest(requestId, error.message);
-        });
+          // Remove video-specific parameters from prompt for image generation
+          const imagePrompt = prompt.replace(/--video/g, '').replace(/--ar 9:16/g, '--ar 4:5').trim();
+
+          this.midjourney.Imagine(imagePrompt, async (uri, progress) => {
+            console.log(`[Midjourney] Image generation progress: ${progress}% - ${uri}`);
+
+            if (progress === 100 && uri) {
+              // Image completed, now generate video from it
+              console.log(`[API] Step 2/2: Converting image to video with frame: ${uri}`);
+
+              try {
+                // Add the image URL as start frame for video
+                const videoPrompt = `${uri} ${prompt}`;
+
+                this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
+                  console.log(`[Midjourney] Video generation progress: ${videoProgress}% - ${videoUri}`);
+
+                  if (videoProgress === 100 && videoUri) {
+                    console.log(`[API] Request ${requestId} completed with video: ${videoUri}`);
+                    this.completeRequest(requestId, videoUri);
+                  }
+                }).catch(error => {
+                  console.error(`[Midjourney] Video generation error for request ${requestId}:`, error.message);
+                  this.failRequest(requestId, error.message);
+                });
+              } catch (error) {
+                console.error(`[API] Error starting video generation:`, error);
+                this.failRequest(requestId, error.message);
+              }
+            }
+          }).catch(error => {
+            console.error(`[Midjourney] Image generation error for request ${requestId}:`, error.message);
+            this.failRequest(requestId, error.message);
+          });
+        } else {
+          // Regular image generation
+          this.midjourney.Imagine(prompt, (uri, progress) => {
+            console.log(`[Midjourney] Progress: ${progress}% - ${uri}`);
+
+            if (progress === 100 && uri) {
+              console.log(`[API] Request ${requestId} completed with image: ${uri}`);
+              this.completeRequest(requestId, uri);
+            }
+          }).catch(error => {
+            console.error(`[Midjourney] Error for request ${requestId}:`, error.message);
+            this.failRequest(requestId, error.message);
+          });
+        }
 
         console.log(`[API] Request ${requestId} created and sent to Midjourney`);
 
         res.json({
           success: true,
           requestId,
-          message: 'Imagine command sent to Midjourney'
+          message: `${type === 'video' ? 'Video' : 'Image'} generation started`
         });
 
       } catch (error) {
