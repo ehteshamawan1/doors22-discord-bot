@@ -5,12 +5,22 @@
 
 const express = require('express');
 const cors = require('cors');
+const { Midjourney } = require('midjourney');
 
 class APIServer {
   constructor(discordClient) {
     this.app = express();
     this.client = discordClient;
     this.port = process.env.PORT || 3002;
+
+    // Initialize Midjourney API client
+    this.midjourney = new Midjourney({
+      ServerId: process.env.DISCORD_GUILD_ID,
+      ChannelId: process.env.DISCORD_CHANNEL_ID,
+      SalaiToken: process.env.DISCORD_USER_TOKEN,
+      Debug: true,
+      Ws: true
+    });
 
     // Store pending and completed requests
     this.pendingRequests = new Map();
@@ -54,7 +64,7 @@ class APIServer {
     // Send imagine command to Midjourney
     this.app.post('/api/midjourney/imagine', async (req, res) => {
       try {
-        const { prompt, type, channelId } = req.body;
+        const { prompt, type } = req.body;
 
         if (!prompt) {
           return res.status(400).json({
@@ -63,38 +73,35 @@ class APIServer {
           });
         }
 
-        // Get the channel
-        const targetChannelId = channelId || process.env.DISCORD_CHANNEL_ID;
-        console.log(`[API] Fetching channel: ${targetChannelId}`);
-
-        const channel = await this.client.channels.fetch(targetChannelId);
-
-        if (!channel) {
-          return res.status(404).json({
-            success: false,
-            error: 'Channel not found'
-          });
-        }
-
-        // Send the imagine command
-        console.log(`[API] Sending imagine command: ${prompt.substring(0, 100)}...`);
-        const message = await channel.send(`/imagine prompt: ${prompt}`);
+        console.log(`[API] Sending imagine command to Midjourney: ${prompt.substring(0, 100)}...`);
 
         // Generate request ID
         const requestId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        // Store request
+        // Store request as pending
         this.pendingRequests.set(requestId, {
           requestId,
           prompt,
           type,
           status: 'pending',
-          messageId: message.id,
-          channelId: channel.id,
           sentAt: new Date().toISOString()
         });
 
-        console.log(`[API] Request ${requestId} created and stored`);
+        // Send to Midjourney API (async, don't wait)
+        this.midjourney.Imagine(prompt, (uri, progress) => {
+          console.log(`[Midjourney] Progress: ${progress}% - ${uri}`);
+
+          if (progress === 100 && uri) {
+            // Generation completed
+            console.log(`[API] Request ${requestId} completed with image: ${uri}`);
+            this.completeRequest(requestId, uri);
+          }
+        }).catch(error => {
+          console.error(`[Midjourney] Error for request ${requestId}:`, error.message);
+          this.failRequest(requestId, error.message);
+        });
+
+        console.log(`[API] Request ${requestId} created and sent to Midjourney`);
 
         res.json({
           success: true,
