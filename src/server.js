@@ -127,11 +127,41 @@ class APIServer {
           });
         } else {
           // Regular image generation
-          this.midjourney.Imagine(prompt, (uri, progress) => {
-            console.log(`[Midjourney] Progress: ${progress}% - ${uri}`);
+          this.midjourney.Imagine(prompt, async (uri, progress, content) => {
+            console.log(`[Midjourney] Image progress: ${progress}% - ${uri}`);
 
-            if (progress === 100 && uri) {
-              console.log(`[API] Request ${requestId} completed with image: ${uri}`);
+            // Midjourney generates 4-image grid, need to check when it's done
+            // Progress may not reach 100, so also check if uri is final image
+            if (uri && uri.includes('doors_22__78435')) {
+              // This is the final 4-image grid
+              console.log(`[API] 4-image grid generated: ${uri}`);
+
+              // Randomly select one of the 4 images (U1-U4) for variety
+              const randomIndex = Math.floor(Math.random() * 4) + 1; // 1, 2, 3, or 4
+              console.log(`[API] Auto-upscaling random image U${randomIndex}...`);
+
+              try {
+                // Upscale the selected image to get high-res single image
+                const upscaleResult = await this.midjourney.Upscale({
+                  index: randomIndex, // U1, U2, U3, or U4
+                  msgId: content.id,
+                  hash: content.hash || this.extractHashFromUri(uri),
+                  flags: content.flags
+                }, (upscaleUri, upscaleProgress) => {
+                  console.log(`[Midjourney] Upscale U${randomIndex} progress: ${upscaleProgress}% - ${upscaleUri}`);
+
+                  if (upscaleUri && upscaleProgress === 100) {
+                    console.log(`[API] Request ${requestId} completed with upscaled image U${randomIndex}: ${upscaleUri}`);
+                    this.completeRequest(requestId, upscaleUri);
+                  }
+                });
+              } catch (upscaleError) {
+                console.error(`[API] Upscale failed, using grid image:`, upscaleError.message);
+                // If upscale fails, just use the grid image
+                this.completeRequest(requestId, uri);
+              }
+            } else if (progress >= 100 && uri) {
+              console.log(`[API] Request ${requestId} completed at 100%: ${uri}`);
               this.completeRequest(requestId, uri);
             }
           }).catch(error => {
@@ -252,6 +282,15 @@ class APIServer {
       }
     }
     return null;
+  }
+
+  /**
+   * Extract hash from Midjourney image URI
+   */
+  extractHashFromUri(uri) {
+    // Extract hash from URI like: ...doors_22__78435_..._HASH.png
+    const match = uri.match(/_([a-f0-9-]+)\.(png|webp)/i);
+    return match ? match[1] : null;
   }
 
   start() {
