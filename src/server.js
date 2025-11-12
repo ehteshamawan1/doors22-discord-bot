@@ -94,54 +94,32 @@ class APIServer {
           // Remove video-specific parameters from prompt for image generation
           const imagePrompt = prompt.replace(/--video/g, '').replace(/--ar 9:16/g, '--ar 4:5').trim();
 
-          this.midjourney.Imagine(imagePrompt, async (uri, progress, content) => {
+          this.midjourney.Imagine(imagePrompt, async (uri, progress) => {
             console.log(`[Midjourney] Image generation progress: ${progress}% - ${uri}`);
 
-            // Check if 4-grid image is complete
-            if (uri && uri.includes('doors_22__78435')) {
+            // Check if 4-grid image is complete (final PNG with username)
+            if (uri && uri.includes('doors_22__78435') && uri.endsWith('.png')) {
               console.log(`[API] Step 1/2 Complete: 4-image grid generated: ${uri}`);
-
-              // Randomly select one of the 4 images for video base
-              const randomIndex = Math.floor(Math.random() * 4) + 1;
-              console.log(`[API] Auto-upscaling image U${randomIndex} for video base...`);
+              console.log(`[API] Step 2/2: Generating video with base image...`);
 
               try {
-                // Upscale selected image
-                const upscaleResult = await this.midjourney.Upscale({
-                  index: randomIndex,
-                  msgId: content.id,
-                  hash: content.hash || this.extractHashFromUri(uri),
-                  flags: content.flags
-                }, async (upscaleUri, upscaleProgress) => {
-                  console.log(`[Midjourney] Upscale U${randomIndex} progress: ${upscaleProgress}% - ${upscaleUri}`);
+                // Generate video with 4-grid image as start frame
+                const videoPrompt = `${uri} ${prompt}`;
 
-                  if (upscaleUri && upscaleProgress === 100) {
-                    console.log(`[API] Step 2/3: Upscaled image ready, generating video with frame: ${upscaleUri}`);
+                this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
+                  console.log(`[Midjourney] Video generation progress: ${videoProgress}% - ${videoUri}`);
 
-                    try {
-                      // Now generate video with upscaled image as start frame
-                      const videoPrompt = `${upscaleUri} ${prompt}`;
-
-                      this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
-                        console.log(`[Midjourney] Video generation progress: ${videoProgress}% - ${videoUri}`);
-
-                        if (videoUri && videoProgress === 100) {
-                          console.log(`[API] Request ${requestId} completed with video: ${videoUri}`);
-                          this.completeRequest(requestId, videoUri);
-                        }
-                      }).catch(error => {
-                        console.error(`[Midjourney] Video generation error:`, error.message);
-                        this.failRequest(requestId, error.message);
-                      });
-                    } catch (error) {
-                      console.error(`[API] Error starting video generation:`, error);
-                      this.failRequest(requestId, error.message);
-                    }
+                  if (videoUri && videoProgress === 100) {
+                    console.log(`[API] Request ${requestId} completed with video: ${videoUri}`);
+                    this.completeRequest(requestId, videoUri);
                   }
+                }).catch(error => {
+                  console.error(`[Midjourney] Video generation error:`, error.message);
+                  this.failRequest(requestId, error.message);
                 });
-              } catch (upscaleError) {
-                console.error(`[API] Upscale failed:`, upscaleError.message);
-                this.failRequest(requestId, upscaleError.message);
+              } catch (error) {
+                console.error(`[API] Error starting video generation:`, error);
+                this.failRequest(requestId, error.message);
               }
             }
           }).catch(error => {
@@ -150,41 +128,16 @@ class APIServer {
           });
         } else {
           // Regular image generation
-          this.midjourney.Imagine(prompt, async (uri, progress, content) => {
+          this.midjourney.Imagine(prompt, async (uri, progress) => {
             console.log(`[Midjourney] Image progress: ${progress}% - ${uri}`);
 
-            // Midjourney generates 4-image grid, need to check when it's done
-            // Progress may not reach 100, so also check if uri is final image
-            if (uri && uri.includes('doors_22__78435')) {
+            // Midjourney generates 4-image grid - check if it's the final PNG (not webp preview)
+            if (uri && uri.includes('doors_22__78435') && uri.endsWith('.png')) {
               // This is the final 4-image grid
               console.log(`[API] 4-image grid generated: ${uri}`);
 
-              // Randomly select one of the 4 images (U1-U4) for variety
-              const randomIndex = Math.floor(Math.random() * 4) + 1; // 1, 2, 3, or 4
-              console.log(`[API] Auto-upscaling random image U${randomIndex}...`);
-
-              try {
-                // Upscale the selected image to get high-res single image
-                const upscaleResult = await this.midjourney.Upscale({
-                  index: randomIndex, // U1, U2, U3, or U4
-                  msgId: content.id,
-                  hash: content.hash || this.extractHashFromUri(uri),
-                  flags: content.flags
-                }, (upscaleUri, upscaleProgress) => {
-                  console.log(`[Midjourney] Upscale U${randomIndex} progress: ${upscaleProgress}% - ${upscaleUri}`);
-
-                  if (upscaleUri && upscaleProgress === 100) {
-                    console.log(`[API] Request ${requestId} completed with upscaled image U${randomIndex}: ${upscaleUri}`);
-                    this.completeRequest(requestId, upscaleUri);
-                  }
-                });
-              } catch (upscaleError) {
-                console.error(`[API] Upscale failed, using grid image:`, upscaleError.message);
-                // If upscale fails, just use the grid image
-                this.completeRequest(requestId, uri);
-              }
-            } else if (progress >= 100 && uri) {
-              console.log(`[API] Request ${requestId} completed at 100%: ${uri}`);
+              // For images, return the 4-grid directly
+              console.log(`[API] Request ${requestId} completed with 4-grid image: ${uri}`);
               this.completeRequest(requestId, uri);
             }
           }).catch(error => {
