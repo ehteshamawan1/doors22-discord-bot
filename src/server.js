@@ -94,31 +94,54 @@ class APIServer {
           // Remove video-specific parameters from prompt for image generation
           const imagePrompt = prompt.replace(/--video/g, '').replace(/--ar 9:16/g, '--ar 4:5').trim();
 
-          this.midjourney.Imagine(imagePrompt, async (uri, progress) => {
+          this.midjourney.Imagine(imagePrompt, async (uri, progress, content) => {
             console.log(`[Midjourney] Image generation progress: ${progress}% - ${uri}`);
 
-            if (progress === 100 && uri) {
-              // Image completed, now generate video from it
-              console.log(`[API] Step 2/2: Converting image to video with frame: ${uri}`);
+            // Check if 4-grid image is complete
+            if (uri && uri.includes('doors_22__78435')) {
+              console.log(`[API] Step 1/2 Complete: 4-image grid generated: ${uri}`);
+
+              // Randomly select one of the 4 images for video base
+              const randomIndex = Math.floor(Math.random() * 4) + 1;
+              console.log(`[API] Auto-upscaling image U${randomIndex} for video base...`);
 
               try {
-                // Add the image URL as start frame for video
-                const videoPrompt = `${uri} ${prompt}`;
+                // Upscale selected image
+                const upscaleResult = await this.midjourney.Upscale({
+                  index: randomIndex,
+                  msgId: content.id,
+                  hash: content.hash || this.extractHashFromUri(uri),
+                  flags: content.flags
+                }, async (upscaleUri, upscaleProgress) => {
+                  console.log(`[Midjourney] Upscale U${randomIndex} progress: ${upscaleProgress}% - ${upscaleUri}`);
 
-                this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
-                  console.log(`[Midjourney] Video generation progress: ${videoProgress}% - ${videoUri}`);
+                  if (upscaleUri && upscaleProgress === 100) {
+                    console.log(`[API] Step 2/3: Upscaled image ready, generating video with frame: ${upscaleUri}`);
 
-                  if (videoProgress === 100 && videoUri) {
-                    console.log(`[API] Request ${requestId} completed with video: ${videoUri}`);
-                    this.completeRequest(requestId, videoUri);
+                    try {
+                      // Now generate video with upscaled image as start frame
+                      const videoPrompt = `${upscaleUri} ${prompt}`;
+
+                      this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
+                        console.log(`[Midjourney] Video generation progress: ${videoProgress}% - ${videoUri}`);
+
+                        if (videoUri && videoProgress === 100) {
+                          console.log(`[API] Request ${requestId} completed with video: ${videoUri}`);
+                          this.completeRequest(requestId, videoUri);
+                        }
+                      }).catch(error => {
+                        console.error(`[Midjourney] Video generation error:`, error.message);
+                        this.failRequest(requestId, error.message);
+                      });
+                    } catch (error) {
+                      console.error(`[API] Error starting video generation:`, error);
+                      this.failRequest(requestId, error.message);
+                    }
                   }
-                }).catch(error => {
-                  console.error(`[Midjourney] Video generation error for request ${requestId}:`, error.message);
-                  this.failRequest(requestId, error.message);
                 });
-              } catch (error) {
-                console.error(`[API] Error starting video generation:`, error);
-                this.failRequest(requestId, error.message);
+              } catch (upscaleError) {
+                console.error(`[API] Upscale failed:`, upscaleError.message);
+                this.failRequest(requestId, upscaleError.message);
               }
             }
           }).catch(error => {
