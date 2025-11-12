@@ -42,8 +42,9 @@ client.on('messageCreate', async (message) => {
       console.log('🖼️  Media URL:', mediaUrl);
 
       // Determine if this is an image or video
-      const isVideo = mediaUrl.endsWith('.mp4') || mediaUrl.endsWith('.mov') || mediaUrl.includes('/video/');
-      const isPng = mediaUrl.endsWith('.png');
+      // URLs may have query parameters, so check if .png or .mp4 appears before query string
+      const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('.mov') || mediaUrl.includes('/video/');
+      const isPng = mediaUrl.includes('.png');
 
       console.log(`Media type: ${isVideo ? 'video' : 'image'}, isPng: ${isPng}`);
 
