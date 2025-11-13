@@ -210,18 +210,26 @@ class APIServer {
       // Randomly select one upscale button
       const randomButton = upscaleButtons[Math.floor(Math.random() * upscaleButtons.length)];
       console.log(`[API] Selected ${randomButton.label} for upscaling`);
+      console.log(`[API] Button data:`, JSON.stringify(randomButton, null, 2));
 
       // Update request status
       request.currentStep = 'upscaling';
       request.gridImageUrl = imageUrl;
       request.selectedButton = randomButton.label;
 
-      // Trigger upscale using Custom method
+      // Extract upscale index from label (U1 = 1, U2 = 2, etc.)
+      const upscaleIndex = parseInt(randomButton.label.replace('U', ''));
+
+      // Trigger upscale using Custom method with proper custom_id
       console.log(`[API] Triggering upscale with button: ${randomButton.label}`);
+      console.log(`[API] Message ID: ${message.id}`);
+      console.log(`[API] Custom ID: ${randomButton.customId || randomButton.custom_id}`);
+
       this.midjourney.Custom({
         msgId: message.id,
-        flags: message.flags,
-        customId: randomButton.custom_id,
+        flags: message.flags || 0,
+        customId: randomButton.customId || randomButton.custom_id,
+        content: request.prompt || '',
         loading: (uri, progress) => {
           console.log(`[Midjourney] Upscale progress: ${progress}% - ${uri}`);
         }
@@ -260,18 +268,23 @@ class APIServer {
       // Randomly select one upscale button
       const randomButton = upscaleButtons[Math.floor(Math.random() * upscaleButtons.length)];
       console.log(`[API] Selected ${randomButton.label} for video upscaling`);
+      console.log(`[API] Button data:`, JSON.stringify(randomButton, null, 2));
 
       // Update request status
       request.currentStep = 'upscaling_video';
       request.gridVideoUrl = videoUrl;
       request.selectedButton = randomButton.label;
 
-      // Trigger upscale using Custom method
+      // Trigger upscale using Custom method with proper custom_id
       console.log(`[API] Triggering video upscale with button: ${randomButton.label}`);
+      console.log(`[API] Message ID: ${message.id}`);
+      console.log(`[API] Custom ID: ${randomButton.customId || randomButton.custom_id}`);
+
       this.midjourney.Custom({
         msgId: message.id,
-        flags: message.flags,
-        customId: randomButton.custom_id,
+        flags: message.flags || 0,
+        customId: randomButton.customId || randomButton.custom_id,
+        content: request.prompt || '',
         loading: (uri, progress) => {
           console.log(`[Midjourney] Video upscale progress: ${progress}% - ${uri}`);
         }
