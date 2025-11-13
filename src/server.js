@@ -212,8 +212,14 @@ class APIServer {
       console.log(`[API] Selected ${randomButton.label} for upscaling`);
       console.log(`[API] Button data:`, JSON.stringify(randomButton, null, 2));
 
-      // Update request status
-      request.currentStep = 'upscaling';
+      // Update request status - different states for image vs video
+      if (request.type === 'video') {
+        request.currentStep = 'upscale_base_image';
+        console.log(`[API] Video request: Waiting for upscaled base image`);
+      } else {
+        request.currentStep = 'upscaling';
+        console.log(`[API] Image request: Waiting for upscaled image`);
+      }
       request.gridImageUrl = imageUrl;
       request.selectedButton = randomButton.label;
 
