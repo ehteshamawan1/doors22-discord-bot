@@ -188,6 +188,150 @@ class APIServer {
   }
 
   /**
+   * Handle image upscaling - randomly select U1-U4
+   */
+  async handleImageUpscale(requestId, imageUrl, message) {
+    if (!this.pendingRequests.has(requestId)) {
+      console.log(`[API] Request ${requestId} not found in pending requests`);
+      return;
+    }
+
+    try {
+      const request = this.pendingRequests.get(requestId);
+      const buttons = message.components[0].components;
+      const upscaleButtons = buttons.filter(btn => ['U1', 'U2', 'U3', 'U4'].includes(btn.label));
+
+      if (upscaleButtons.length === 0) {
+        console.log(`[API] No upscale buttons found, completing without upscale`);
+        await this.handleImageComplete(requestId, imageUrl);
+        return;
+      }
+
+      // Randomly select one upscale button
+      const randomButton = upscaleButtons[Math.floor(Math.random() * upscaleButtons.length)];
+      console.log(`[API] Selected ${randomButton.label} for upscaling`);
+
+      // Update request status
+      request.currentStep = 'upscaling';
+      request.gridImageUrl = imageUrl;
+      request.selectedButton = randomButton.label;
+
+      // Trigger upscale using Custom method
+      console.log(`[API] Triggering upscale with button: ${randomButton.label}`);
+      this.midjourney.Custom({
+        msgId: message.id,
+        flags: message.flags,
+        customId: randomButton.custom_id,
+        loading: (uri, progress) => {
+          console.log(`[Midjourney] Upscale progress: ${progress}% - ${uri}`);
+        }
+      }).catch(error => {
+        console.error(`[Midjourney] Upscale error:`, error.message);
+        // Fallback to grid image if upscale fails
+        this.handleImageComplete(requestId, imageUrl);
+      });
+    } catch (error) {
+      console.error(`[API] Error handling image upscale:`, error);
+      // Fallback to completing with grid image
+      await this.handleImageComplete(requestId, imageUrl);
+    }
+  }
+
+  /**
+   * Handle video upscaling - randomly select U1-U4 for video
+   */
+  async handleVideoUpscale(requestId, videoUrl, message) {
+    if (!this.pendingRequests.has(requestId)) {
+      console.log(`[API] Request ${requestId} not found in pending requests`);
+      return;
+    }
+
+    try {
+      const request = this.pendingRequests.get(requestId);
+      const buttons = message.components[0].components;
+      const upscaleButtons = buttons.filter(btn => ['U1', 'U2', 'U3', 'U4'].includes(btn.label));
+
+      if (upscaleButtons.length === 0) {
+        console.log(`[API] No upscale buttons found for video, completing without upscale`);
+        this.completeRequest(requestId, videoUrl);
+        return;
+      }
+
+      // Randomly select one upscale button
+      const randomButton = upscaleButtons[Math.floor(Math.random() * upscaleButtons.length)];
+      console.log(`[API] Selected ${randomButton.label} for video upscaling`);
+
+      // Update request status
+      request.currentStep = 'upscaling_video';
+      request.gridVideoUrl = videoUrl;
+      request.selectedButton = randomButton.label;
+
+      // Trigger upscale using Custom method
+      console.log(`[API] Triggering video upscale with button: ${randomButton.label}`);
+      this.midjourney.Custom({
+        msgId: message.id,
+        flags: message.flags,
+        customId: randomButton.custom_id,
+        loading: (uri, progress) => {
+          console.log(`[Midjourney] Video upscale progress: ${progress}% - ${uri}`);
+        }
+      }).catch(error => {
+        console.error(`[Midjourney] Video upscale error:`, error.message);
+        // Fallback to grid video if upscale fails
+        this.completeRequest(requestId, videoUrl);
+      });
+    } catch (error) {
+      console.error(`[API] Error handling video upscale:`, error);
+      // Fallback to completing with grid video
+      this.completeRequest(requestId, videoUrl);
+    }
+  }
+
+  /**
+   * Handle upscaled image completion - continue to video generation or complete image request
+   */
+  async handleUpscaledImageComplete(requestId, imageUrl) {
+    if (!this.pendingRequests.has(requestId)) {
+      console.log(`[API] Request ${requestId} not found in pending requests`);
+      return;
+    }
+
+    const request = this.pendingRequests.get(requestId);
+    console.log(`[API] Upscaled image received for ${request.type} request`);
+
+    // If this is for video generation, start video generation with upscaled image
+    if (request.type === 'video') {
+      console.log(`[API] Step 1.5/3 Complete: Base image upscaled: ${imageUrl}`);
+      console.log(`[API] Step 2/3: Generating video with upscaled base image...`);
+
+      try {
+        // Update request
+        request.currentStep = 'video';
+        request.baseImageUrl = imageUrl;
+
+        // Generate video with upscaled image as start frame
+        const videoPrompt = `${imageUrl} ${request.prompt}`;
+
+        this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
+          console.log(`[Midjourney] Video generation progress: ${videoProgress}% - ${videoUri}`);
+
+          // Discord message handler will detect video completion
+        }).catch(error => {
+          console.error(`[Midjourney] Video generation error:`, error.message);
+          this.failRequest(requestId, error.message);
+        });
+      } catch (error) {
+        console.error(`[API] Error starting video generation:`, error);
+        this.failRequest(requestId, error.message);
+      }
+    } else {
+      // Regular image request - complete it with upscaled image
+      console.log(`[API] Image upscale complete, finalizing request`);
+      this.completeRequest(requestId, imageUrl);
+    }
+  }
+
+  /**
    * Handle image completion - either complete request or trigger video generation
    */
   async handleImageComplete(requestId, imageUrl) {
@@ -200,15 +344,17 @@ class APIServer {
 
     // If this is for video generation, start step 2
     if (request.type === 'video' && request.currentStep === 'image') {
-      console.log(`[API] Step 1/2 Complete: 4-image grid generated: ${imageUrl}`);
-      console.log(`[API] Step 2/2: Generating video with base image...`);
+      console.log(`[API] Step 1/3 Complete: Base image generated (upscaling will follow): ${imageUrl}`);
+      // Note: The upscaling will be handled by bot.js when it detects the 4-grid
+      // This method is only called if the image doesn't have upscale buttons
+      console.log(`[API] Step 2/3: Generating video with base image...`);
 
       try {
         // Update request
         request.currentStep = 'video';
         request.baseImageUrl = imageUrl;
 
-        // Generate video with 4-grid image as start frame
+        // Generate video with image as start frame
         const videoPrompt = `${imageUrl} ${request.prompt}`;
 
         this.midjourney.Imagine(videoPrompt, (videoUri, videoProgress) => {
