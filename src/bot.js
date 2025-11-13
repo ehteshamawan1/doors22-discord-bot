@@ -93,6 +93,16 @@ client.on('messageCreate', async (message) => {
           }
         }
 
+        // For image requests waiting for upscaled result (check this FIRST)
+        if (request.type === 'image' && request.currentStep === 'upscaling') {
+          if (isPng && !hasUpscaleButtons) {
+            console.log(`✅ Matched upscaled image for request ${requestId}`);
+            matchedRequestId = requestId;
+            await apiServer.handleUpscaledImageComplete(requestId, mediaUrl);
+            break;
+          }
+        }
+
         // For video requests on step 1.5 (waiting for upscaled base image)
         if (request.type === 'video' && request.currentStep === 'upscale_base_image') {
           if (isPng && !hasUpscaleButtons) {
@@ -118,16 +128,6 @@ client.on('messageCreate', async (message) => {
               // Already upscaled or single image
               await apiServer.handleImageComplete(requestId, mediaUrl);
             }
-            break;
-          }
-        }
-
-        // For image requests waiting for upscaled result
-        if (request.type === 'image' && request.currentStep === 'upscaling') {
-          if (isPng && !hasUpscaleButtons) {
-            console.log(`✅ Matched upscaled image for request ${requestId}`);
-            matchedRequestId = requestId;
-            await apiServer.handleUpscaledImageComplete(requestId, mediaUrl);
             break;
           }
         }
