@@ -185,6 +185,215 @@ class APIServer {
         completed: Array.from(this.completedRequests.values()).slice(-10) // Last 10 completed
       });
     });
+
+    /**
+     * Click a button on a Midjourney message (U1-U4, V1-V4, etc.)
+     * Used for video generation workflow: upscale → animate → select
+     */
+    this.app.post('/api/midjourney/button', async (req, res) => {
+      try {
+        const { messageId, buttonId, channelId } = req.body;
+
+        if (!messageId || !buttonId) {
+          return res.status(400).json({
+            success: false,
+            error: 'messageId and buttonId are required'
+          });
+        }
+
+        console.log(`[API] Clicking button ${buttonId} on message ${messageId}`);
+
+        // Generate request ID for tracking
+        const requestId = `btn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Fetch the message to get button info
+        const channel = await this.client.channels.fetch(channelId || process.env.DISCORD_CHANNEL_ID);
+        const message = await channel.messages.fetch(messageId);
+
+        if (!message.components || message.components.length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Message has no interactive components'
+          });
+        }
+
+        // Find the button by label
+        let targetButton = null;
+        for (const row of message.components) {
+          for (const component of row.components) {
+            if (component.label === buttonId || component.customId?.includes(buttonId)) {
+              targetButton = component;
+              break;
+            }
+          }
+          if (targetButton) break;
+        }
+
+        if (!targetButton) {
+          return res.status(400).json({
+            success: false,
+            error: `Button ${buttonId} not found on message`
+          });
+        }
+
+        // Store pending request
+        this.pendingRequests.set(requestId, {
+          requestId,
+          type: 'button_click',
+          buttonId,
+          messageId,
+          status: 'pending',
+          sentAt: new Date().toISOString()
+        });
+
+        // Click the button using Midjourney Custom method
+        console.log(`[API] Triggering button click: ${targetButton.label || targetButton.customId}`);
+
+        this.midjourney.Custom({
+          msgId: messageId,
+          flags: message.flags || 0,
+          customId: targetButton.customId || targetButton.custom_id,
+          content: '',
+          loading: (uri, progress) => {
+            console.log(`[Midjourney] Button action progress: ${progress}% - ${uri}`);
+          }
+        }).catch(error => {
+          console.error(`[Midjourney] Button click error:`, error.message);
+          this.failRequest(requestId, error.message);
+        });
+
+        res.json({
+          success: true,
+          requestId,
+          message: `Button ${buttonId} click initiated`
+        });
+
+      } catch (error) {
+        console.error('[API] Error clicking button:', error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    /**
+     * Trigger animate feature on an upscaled image
+     * This creates a 5-10 second video from a static image
+     */
+    this.app.post('/api/midjourney/animate', async (req, res) => {
+      try {
+        const { messageId, channelId } = req.body;
+
+        if (!messageId) {
+          return res.status(400).json({
+            success: false,
+            error: 'messageId is required'
+          });
+        }
+
+        console.log(`[API] Triggering animate on message ${messageId}`);
+
+        // Generate request ID for tracking
+        const requestId = `anim_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Fetch the message to find animate button
+        const channel = await this.client.channels.fetch(channelId || process.env.DISCORD_CHANNEL_ID);
+        const message = await channel.messages.fetch(messageId);
+
+        if (!message.components || message.components.length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Message has no interactive components'
+          });
+        }
+
+        // Find the animate button (usually has emoji or "Animate" label)
+        let animateButton = null;
+        for (const row of message.components) {
+          for (const component of row.components) {
+            // Animate button might have various identifiers
+            const label = (component.label || '').toLowerCase();
+            const customId = (component.customId || component.custom_id || '').toLowerCase();
+
+            if (label.includes('animate') ||
+                label.includes('video') ||
+                customId.includes('animate') ||
+                customId.includes('video') ||
+                component.emoji?.name?.includes('video')) {
+              animateButton = component;
+              break;
+            }
+          }
+          if (animateButton) break;
+        }
+
+        if (!animateButton) {
+          // Try to find any button that might be the animate feature
+          // Sometimes it's represented by an emoji only
+          for (const row of message.components) {
+            for (const component of row.components) {
+              if (component.emoji && !['U1', 'U2', 'U3', 'U4', 'V1', 'V2', 'V3', 'V4'].includes(component.label)) {
+                // This might be the animate button
+                console.log(`[API] Found potential animate button with emoji: ${component.emoji.name}`);
+                animateButton = component;
+                break;
+              }
+            }
+            if (animateButton) break;
+          }
+        }
+
+        if (!animateButton) {
+          return res.status(400).json({
+            success: false,
+            error: 'Animate button not found on message. Available buttons: ' +
+                   message.components.flatMap(row =>
+                     row.components.map(c => c.label || c.customId)
+                   ).join(', ')
+          });
+        }
+
+        // Store pending request
+        this.pendingRequests.set(requestId, {
+          requestId,
+          type: 'animate',
+          messageId,
+          status: 'pending',
+          currentStep: 'animating',
+          sentAt: new Date().toISOString()
+        });
+
+        // Trigger animate using Custom method
+        console.log(`[API] Triggering animate: ${animateButton.label || animateButton.customId}`);
+
+        this.midjourney.Custom({
+          msgId: messageId,
+          flags: message.flags || 0,
+          customId: animateButton.customId || animateButton.custom_id,
+          content: '',
+          loading: (uri, progress) => {
+            console.log(`[Midjourney] Animate progress: ${progress}% - ${uri}`);
+          }
+        }).catch(error => {
+          console.error(`[Midjourney] Animate error:`, error.message);
+          this.failRequest(requestId, error.message);
+        });
+
+        res.json({
+          success: true,
+          requestId,
+          message: 'Animate initiated'
+        });
+
+      } catch (error) {
+        console.error('[API] Error triggering animate:', error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
   }
 
   /**
