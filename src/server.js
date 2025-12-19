@@ -310,40 +310,40 @@ class APIServer {
           });
         }
 
-        // Find the animate button (usually has emoji or "Animate" label)
+        // Find the animate button (prefer high motion if available)
         let animateButton = null;
-        for (const row of message.components) {
-          for (const component of row.components) {
-            // Animate button might have various identifiers
-            const label = (component.label || '').toLowerCase();
-            const customId = (component.customId || component.custom_id || '').toLowerCase();
+        const allButtons = message.components.flatMap(row => row.components);
+        const getLabel = (component) => (component.label || '').toLowerCase();
+        const getCustomId = (component) => (component.customId || component.custom_id || '').toLowerCase();
+        const isAnimate = (component) => {
+          const label = getLabel(component);
+          const customId = getCustomId(component);
+          return (
+            label.includes('animate') ||
+            label.includes('video') ||
+            customId.includes('animate') ||
+            customId.includes('video') ||
+            component.emoji?.name?.includes('video')
+          );
+        };
+        const isHigh = (component) => {
+          const label = getLabel(component);
+          const customId = getCustomId(component);
+          return label.includes('high') || customId.includes('animate_high');
+        };
+        const isLow = (component) => {
+          const label = getLabel(component);
+          const customId = getCustomId(component);
+          return label.includes('low') || customId.includes('animate_low');
+        };
 
-            if (label.includes('animate') ||
-                label.includes('video') ||
-                customId.includes('animate') ||
-                customId.includes('video') ||
-                component.emoji?.name?.includes('video')) {
-              animateButton = component;
-              break;
-            }
-          }
-          if (animateButton) break;
-        }
-
-        if (!animateButton) {
-          // Try to find any button that might be the animate feature
-          // Sometimes it's represented by an emoji only
-          for (const row of message.components) {
-            for (const component of row.components) {
-              if (component.emoji && !['U1', 'U2', 'U3', 'U4', 'V1', 'V2', 'V3', 'V4'].includes(component.label)) {
-                // This might be the animate button
-                console.log(`[API] Found potential animate button with emoji: ${component.emoji.name}`);
-                animateButton = component;
-                break;
-              }
-            }
-            if (animateButton) break;
-          }
+        const animateCandidates = allButtons.filter(isAnimate);
+        if (animateCandidates.length > 0) {
+          const highCandidate = animateCandidates.find(isHigh);
+          const lowCandidate = animateCandidates.find(isLow);
+          animateButton = highCandidate || lowCandidate || animateCandidates[0];
+          console.log(`[API] Animate candidates: ${animateCandidates.map(c => c.label || c.customId).join(', ')}`);
+          console.log(`[API] Selected animate button: ${animateButton.label || animateButton.customId}`);
         }
 
         if (!animateButton) {
