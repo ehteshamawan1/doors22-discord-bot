@@ -63,13 +63,36 @@ client.on('messageCreate', async (message) => {
       // Try to match with a pending request
       // Look through all pending requests to find a match
       let matchedRequestId = null;
+      const pendingRequests = Array.from(apiServer.pendingRequests.entries());
+      const mediaType = isVideo || isWebp ? 'video' : isPng ? 'image' : null;
 
-      for (const [requestId, request] of apiServer.pendingRequests.entries()) {
+      // Resolve manual button/animate actions first
+      if (mediaType) {
+        const buttonRequests = pendingRequests
+          .filter(([, request]) => request.type === 'button_click' || request.type === 'animate')
+          .filter(([, request]) => !request.expectedType || request.expectedType === mediaType)
+          .sort((a, b) => new Date(a[1].sentAt || 0) - new Date(b[1].sentAt || 0));
+
+        if (buttonRequests.length > 0) {
+          const [requestId, request] = buttonRequests[buttonRequests.length - 1];
+          request.messageId = message.id;
+          apiServer.pendingRequests.set(requestId, request);
+          matchedRequestId = requestId;
+          apiServer.completeRequest(requestId, mediaUrl, message.id);
+          return;
+        }
+      }
+
+      for (const [requestId, request] of pendingRequests) {
         // For video requests on step 2 (video generation), match webp/mp4/mov files
         if (request.type === 'video' && request.currentStep === 'video') {
           if (isWebp || isVideo) {
             console.log(`✅ Matched video request ${requestId} with ${isWebp ? 'WebP' : 'video'} file`);
             matchedRequestId = requestId;
+            request.messageId = message.id;
+            apiServer.pendingRequests.set(requestId, request);
+            request.messageId = message.id;
+            apiServer.pendingRequests.set(requestId, request);
 
             // Check if video has upscale buttons (needs upscaling)
             if (hasUpscaleButtons) {
@@ -77,7 +100,7 @@ client.on('messageCreate', async (message) => {
               await apiServer.handleVideoUpscale(requestId, mediaUrl, message);
             } else {
               // Video is already upscaled or doesn't need upscaling
-              apiServer.completeRequest(requestId, mediaUrl);
+              apiServer.completeRequest(requestId, mediaUrl, message.id);
             }
             break;
           }
@@ -88,7 +111,9 @@ client.on('messageCreate', async (message) => {
           if ((isWebp || isVideo) && !hasUpscaleButtons) {
             console.log(`✅ Matched upscaled video for request ${requestId}`);
             matchedRequestId = requestId;
-            apiServer.completeRequest(requestId, mediaUrl);
+            request.messageId = message.id;
+            apiServer.pendingRequests.set(requestId, request);
+            apiServer.completeRequest(requestId, mediaUrl, message.id);
             break;
           }
         }
@@ -98,6 +123,10 @@ client.on('messageCreate', async (message) => {
           if (isPng && !hasUpscaleButtons) {
             console.log(`✅ Matched upscaled image for request ${requestId}`);
             matchedRequestId = requestId;
+            request.messageId = message.id;
+            apiServer.pendingRequests.set(requestId, request);
+            request.messageId = message.id;
+            apiServer.pendingRequests.set(requestId, request);
             await apiServer.handleUpscaledImageComplete(requestId, mediaUrl);
             break;
           }
@@ -123,7 +152,11 @@ client.on('messageCreate', async (message) => {
             // Check if this is a 4-grid that needs upscaling
             if (hasUpscaleButtons) {
               console.log(`🔄 Image has 4-grid, needs upscaling`);
-              await apiServer.handleImageUpscale(requestId, mediaUrl, message);
+              if (request.manualUpscale) {
+                apiServer.completeRequest(requestId, mediaUrl, message.id);
+              } else {
+                await apiServer.handleImageUpscale(requestId, mediaUrl, message);
+              }
             } else {
               // Already upscaled or single image
               await apiServer.handleImageComplete(requestId, mediaUrl);

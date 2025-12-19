@@ -64,7 +64,7 @@ class APIServer {
     // Send imagine command to Midjourney
     this.app.post('/api/midjourney/imagine', async (req, res) => {
       try {
-        const { prompt, type } = req.body;
+        const { prompt, type, manualUpscale } = req.body;
 
         if (!prompt) {
           return res.status(400).json({
@@ -83,6 +83,7 @@ class APIServer {
           requestId,
           prompt,
           type,
+          manualUpscale: Boolean(manualUpscale),
           status: 'pending',
           sentAt: new Date().toISOString(),
           promptSubstring: prompt.substring(0, 50) // For matching Discord messages
@@ -192,7 +193,7 @@ class APIServer {
      */
     this.app.post('/api/midjourney/button', async (req, res) => {
       try {
-        const { messageId, buttonId, channelId } = req.body;
+        const { messageId, buttonId, channelId, expectedType } = req.body;
 
         if (!messageId || !buttonId) {
           return res.status(400).json({
@@ -241,6 +242,7 @@ class APIServer {
           requestId,
           type: 'button_click',
           buttonId,
+          expectedType,
           messageId,
           status: 'pending',
           sentAt: new Date().toISOString()
@@ -359,6 +361,7 @@ class APIServer {
           requestId,
           type: 'animate',
           messageId,
+          expectedType: 'video',
           status: 'pending',
           currentStep: 'animating',
           sentAt: new Date().toISOString()
@@ -607,11 +610,14 @@ class APIServer {
    * Mark a request as completed
    * Called by the message handler when Midjourney responds
    */
-  completeRequest(requestId, mediaUrl) {
+  completeRequest(requestId, mediaUrl, messageId) {
     if (this.pendingRequests.has(requestId)) {
       const request = this.pendingRequests.get(requestId);
       request.status = 'completed';
       request.mediaUrl = mediaUrl;
+      if (messageId) {
+        request.messageId = messageId;
+      }
       request.completedAt = new Date().toISOString();
 
       this.completedRequests.set(requestId, request);
