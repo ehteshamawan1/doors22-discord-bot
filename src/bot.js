@@ -42,16 +42,21 @@ client.on('messageCreate', async (message) => {
       console.log('🖼️  Media URL:', mediaUrl);
 
       // Determine if this is an image or video
-      // URLs may have query parameters, so check if .png or .mp4 appears before query string
-      // Note: Midjourney videos come as animated .webp files, PNGs are static images
-      const isPng = mediaUrl.includes('.png');
-      const isWebp = mediaUrl.includes('.webp');
+      // Midjourney may return .png, .jpg, .jpeg, or animated .webp for video
+      const contentType = attachment.contentType || '';
+      const fileName = attachment.name || '';
+      const urlLower = mediaUrl.toLowerCase();
+      const nameLower = fileName.toLowerCase();
+      const extMatch = (nameLower.match(/\.(\w+)(?:\?|$)/) || urlLower.match(/\.(\w+)(?:\?|$)/));
+      const ext = extMatch ? extMatch[1] : '';
 
-      // For video requests, webp files are the completed videos
-      // For image requests, png files are the completed images
-      const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('.mov') || mediaUrl.includes('/video/');
+      const isPng = ext === 'png' || urlLower.includes('.png');
+      const isJpg = ext === 'jpg' || ext === 'jpeg' || urlLower.includes('.jpg') || urlLower.includes('.jpeg');
+      const isWebp = ext === 'webp' || urlLower.includes('.webp');
+      const isImageType = contentType.startsWith('image/') || isPng || isJpg || isWebp;
+      const isVideo = contentType.startsWith('video/') || urlLower.includes('.mp4') || urlLower.includes('.mov') || urlLower.includes('/video/');
 
-      console.log(`Media type: isPng=${isPng}, isWebp=${isWebp}, isVideo=${isVideo}`);
+      console.log(`Media type: contentType=${contentType} name=${fileName} ext=${ext} isPng=${isPng} isJpg=${isJpg} isWebp=${isWebp} isVideo=${isVideo}`);
 
       // Check if this message has upscale buttons (U1-U4) - indicates 4-grid image
       const hasUpscaleButtons = message.components && message.components.length > 0 &&
@@ -64,7 +69,7 @@ client.on('messageCreate', async (message) => {
       // Look through all pending requests to find a match
       let matchedRequestId = null;
       const pendingRequests = Array.from(apiServer.pendingRequests.entries());
-      const mediaType = isVideo || isWebp ? 'video' : isPng ? 'image' : null;
+      const mediaType = isVideo || isWebp ? 'video' : isImageType ? 'image' : null;
 
       // Resolve manual button/animate actions first
       if (mediaType) {
