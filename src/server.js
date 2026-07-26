@@ -12,6 +12,8 @@ class APIServer {
     this.app = express();
     this.client = discordClient;
     this.port = process.env.PORT || 3002;
+    this.pendingRequestTtlMs = 15 * 60 * 1000;
+    this.completedRequestLimit = 200;
 
     // Initialize Midjourney API client
     this.midjourney = new Midjourney({
@@ -30,12 +32,39 @@ class APIServer {
     this.setupRoutes();
   }
 
+  pruneExpiredRequests() {
+    const cutoff = Date.now() - this.pendingRequestTtlMs;
+
+    for (const [requestId, request] of this.pendingRequests.entries()) {
+      const sentAt = request.sentAt ? new Date(request.sentAt).getTime() : 0;
+      if (!sentAt || sentAt > cutoff) {
+        continue;
+      }
+
+      request.status = 'failed';
+      request.error = 'Request expired before a terminal Midjourney response was matched';
+      request.failedAt = new Date().toISOString();
+      this.completedRequests.set(requestId, request);
+      this.pendingRequests.delete(requestId);
+      console.warn(`[API] Expired stale pending request ${requestId}`);
+    }
+
+    const completedEntries = Array.from(this.completedRequests.entries());
+    if (completedEntries.length > this.completedRequestLimit) {
+      const overflow = completedEntries.length - this.completedRequestLimit;
+      for (const [requestId] of completedEntries.slice(0, overflow)) {
+        this.completedRequests.delete(requestId);
+      }
+    }
+  }
+
   setupMiddleware() {
     this.app.use(cors());
     this.app.use(express.json());
 
     // Request logging
     this.app.use((req, res, next) => {
+      this.pruneExpiredRequests();
       console.log(`[API] ${req.method} ${req.path}`);
       next();
     });
@@ -84,6 +113,7 @@ class APIServer {
           prompt,
           type,
           manualUpscale: Boolean(manualUpscale),
+          currentStep: 'image',
           status: 'pending',
           sentAt: new Date().toISOString(),
           promptSubstring: prompt.substring(0, 50) // For matching Discord messages
@@ -242,8 +272,10 @@ class APIServer {
           requestId,
           type: 'button_click',
           buttonId,
+          selectedButton: buttonId,
           expectedType,
           messageId,
+          sourceMessageId: messageId,
           status: 'pending',
           sentAt: new Date().toISOString()
         });
@@ -432,6 +464,7 @@ class APIServer {
         request.currentStep = 'upscaling';
         console.log(`[API] Image request: Waiting for upscaled image`);
       }
+      request.sourceMessageId = message.id;
       request.gridImageUrl = imageUrl;
       request.selectedButton = randomButton.label;
 
@@ -490,6 +523,7 @@ class APIServer {
 
       // Update request status
       request.currentStep = 'upscaling_video';
+      request.sourceMessageId = message.id;
       request.gridVideoUrl = videoUrl;
       request.selectedButton = randomButton.label;
 
